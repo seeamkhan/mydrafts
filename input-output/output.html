@@ -35,7 +35,13 @@ canvas { display: none; }
     <button class="primary" id="startBtn">Start Camera</button>
     <button id="stopBtn" disabled>Stop</button>
     <br>
-    <label>Camera: <select id="cameraSel"></select></label>
+    <label>Facing:
+      <select id="facingSel">
+        <option value="environment" selected>Back (default)</option>
+        <option value="user">Front</option>
+      </select>
+    </label>
+    <label>Camera: <select id="cameraSel"><option value="">Auto</option></select></label>
   </div>
 
   <div class="col">
@@ -10237,7 +10243,7 @@ async function listCameras() {
     const tmp = await navigator.mediaDevices.getUserMedia({ video: true });
     tmp.getTracks().forEach(t => t.stop());
     const devices = await navigator.mediaDevices.enumerateDevices();
-    cameraSel.innerHTML = '';
+    cameraSel.innerHTML = '<option value="">Auto</option>';
     devices.filter(d => d.kind === 'videoinput').forEach(d => {
       const opt = document.createElement('option');
       opt.value = d.deviceId;
@@ -10251,16 +10257,19 @@ async function listCameras() {
 
 startBtn.addEventListener('click', async () => {
   try {
-    if (cameraSel.options.length === 0) await listCameras();
     const deviceId = cameraSel.value;
-    stream = await navigator.mediaDevices.getUserMedia({
-      video: {
-        deviceId: deviceId ? { exact: deviceId } : undefined,
-        width: { ideal: 1920 },
-        height: { ideal: 1080 },
-        focusMode: 'continuous',
-      }
-    });
+    const facing = document.getElementById('facingSel').value;
+    const videoConstraints = {
+      width: { ideal: 1920 },
+      height: { ideal: 1080 },
+      focusMode: 'continuous',
+    };
+    if (deviceId) {
+      videoConstraints.deviceId = { exact: deviceId };
+    } else {
+      videoConstraints.facingMode = { ideal: facing };
+    }
+    stream = await navigator.mediaDevices.getUserMedia({ video: videoConstraints });
     video.srcObject = stream;
     await video.play();
     scanning = true;
