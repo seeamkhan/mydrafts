@@ -2977,7 +2977,7 @@ startBtn.addEventListener('click', async () => {
     for (let i = 0; i < total && !stopFlag; i++) {
       const packet = `D|${i}|${chunks[i]}`;
       await drawQR(packet, qrSize);
-      progress.textContent = `Loop ${loopCount} | Chunk ${i+1}/${total}`;
+      progress.textContent = `Loop ${loopCount} | Chunk #${i} (${i+1}/${total})`;
       await sleep(delay);
     }
   }
