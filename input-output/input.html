@@ -4,17 +4,19 @@
 <meta charset="utf-8">
 <title>File to QR Sender</title>
 <style>
-body { font-family: -apple-system, sans-serif; max-width: 900px; margin: 20px auto; padding: 20px; background: #f5f5f5; }
-.controls { background: white; padding: 20px; border-radius: 8px; margin-bottom: 16px; }
+body { font-family: -apple-system, sans-serif; max-width: 1500px; margin: 20px auto; padding: 20px; background: #f5f5f5; }
+.layout { display: flex; gap: 16px; align-items: flex-start; }
+.controls { background: white; padding: 20px; border-radius: 8px; flex: 0 0 420px; }
 button { padding: 12px 24px; font-size: 16px; margin: 8px 4px; cursor: pointer; border-radius: 6px; border: 1px solid #ccc; background: white; }
 button.primary { background: #0066cc; color: white; border-color: #0066cc; font-size: 18px; padding: 16px 32px; }
 button:disabled { opacity: 0.4; cursor: not-allowed; }
 input[type=file] { padding: 12px; border: 2px dashed #999; width: 100%; box-sizing: border-box; background: white; }
-#qrArea { background: white; padding: 30px; border-radius: 8px; text-align: center; }
-#qrCanvas { display: block; margin: 0 auto; background: white; image-rendering: pixelated; }
+#qrArea { background: white; padding: 30px; border-radius: 8px; text-align: center; flex: 1 1 auto; }
+#qrCanvas { display: block; margin: 0 auto; background: white; image-rendering: pixelated; max-width: 100%; height: auto; }
 #status { padding: 12px; background: #fff; border-radius: 6px; margin-top: 16px; font-family: monospace; font-size: 14px; }
 #progress { font-size: 24px; font-weight: bold; color: #0066cc; margin-top: 12px; }
 label { display: inline-block; margin-right: 16px; font-size: 14px; }
+@media (max-width: 900px) { .layout { flex-direction: column; } .controls { flex: 1 1 auto; width: 100%; box-sizing: border-box; } }
 </style>
 </head>
 <body>
@@ -22,6 +24,7 @@ label { display: inline-block; margin-right: 16px; font-size: 14px; }
 <h1>File to QR Sender</h1>
 <p>Pick a file on the <b>input machine</b>. Click Start. Point the <b>output machine</b> camera at the QR code area.</p>
 
+<div class="layout">
 <div class="controls">
   <input type="file" id="fileInput">
   <br><br>
@@ -42,6 +45,7 @@ label { display: inline-block; margin-right: 16px; font-size: 14px; }
 <div id="qrArea">
   <canvas id="qrCanvas" width="600" height="600"></canvas>
   <div id="progress">Ready</div>
+</div>
 </div>
 
 <div id="status">Load a file to begin.</div>
