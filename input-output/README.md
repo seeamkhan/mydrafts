@@ -106,3 +106,18 @@ On the sender page you can adjust:
 6. Match → save file. No match → reset chunks, keep listening.
 
 The hash is the guarantee.
+
+## v2 (fountain coding) - 2026-07-06
+
+`input-v2.html` + `output-v2.html` replace the fixed-chunk loop with Luby
+Transform fountain coding: the sender streams endless coded droplets; ANY
+~110% of the block count rebuilds the file, in any order. A missed frame
+never costs a loop, so the v1 "stuck near the end" stall class is gone.
+Degree rides inside each frame, so browsers never have to agree on float
+math; gzip on the wire when it helps; SHA-256 verify unchanged. Defaults
+tuned for phone-on-monitor: 300 B blocks, 380 ms frames, 760 px QR, EC M.
+Receiver adds center-cropped decoding, zoom/torch controls where the
+browser allows, and honest progress ("solved 61 of 74 blocks"). v1 files
+stay as fallback until v2 passes 3 real transfers in a row.
+Headless proof: 30 KB markdown at 35% simulated frame loss decodes clean
+(hash verified); worst-case incompressible 30 KB ~2 min.
