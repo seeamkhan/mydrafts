@@ -7,7 +7,7 @@
 #   macmode apply                start whatever is enabled (run at login)
 #
 # Features:
-#   keyboard  keyd Mac layout on the built-in keyboard + terminal rules (Cmd+C/V, Shift+Enter)
+#   keyboard  keyd Mac layout on the built-in keyboard (Cmd shortcuts, Cmd+Tab)
 #   drag      three-finger drag (libinput-three-finger-drag)
 #   gestures  touchegg 4-finger gestures
 #
@@ -30,12 +30,6 @@ detach() { setsid -f "$@" >/dev/null 2>&1 </dev/null; }
 # ---------- keyboard ----------
 keyboard_status() { systemctl is-active --quiet keyd && echo on || echo off; }
 
-mapper_start() {
-    pgrep -u "$USER" -f keyd-application-mapper >/dev/null && return
-    [ -f "$HOME/.config/keyd/app.conf" ] && keyd-application-mapper -d >/dev/null 2>&1
-}
-mapper_stop() { pkill -u "$USER" -f keyd-application-mapper; }
-
 # Drop any leftover X-level Cmd/Ctrl swap; keyd does the remapping now.
 xkb_reset() { setxkbmap -option '' -option terminate:ctrl_alt_bksp 2>/dev/null; }
 
@@ -43,11 +37,8 @@ keyboard_on() {
     rm -f "$SYS_FLAG_DIR/keyboard.off" || { echo "macmode: cannot write $SYS_FLAG_DIR (log out/in after install?)" >&2; return 1; }
     systemctl start keyd || return 1
     xkb_reset
-    sleep 0.5
-    mapper_start
 }
 keyboard_off() {
-    mapper_stop
     touch "$SYS_FLAG_DIR/keyboard.off" || { echo "macmode: cannot write $SYS_FLAG_DIR (log out/in after install?)" >&2; return 1; }
     systemctl stop keyd
     xkb_reset
@@ -55,12 +46,7 @@ keyboard_off() {
 keyboard_apply() {
     # keyd.service itself honours the flag at boot, so only fix up the session here.
     xkb_reset
-    if [ -e "$SYS_FLAG_DIR/keyboard.off" ]; then
-        mapper_stop
-    else
-        systemctl is-active --quiet keyd || systemctl start keyd
-        mapper_start
-    fi
+    [ -e "$SYS_FLAG_DIR/keyboard.off" ] || systemctl is-active --quiet keyd || systemctl start keyd
 }
 
 # ---------- three-finger drag ----------
@@ -85,7 +71,7 @@ gestures_apply() { if [ -e "$STATE_DIR/gestures.off" ]; then gestures_off; else 
 # ---------- helpers ----------
 label() {
     case $1 in
-        keyboard) echo "Mac keyboard: Cmd shortcuts, Cmd+Tab, Mac-style terminal, Shift+Enter" ;;
+        keyboard) echo "Mac keyboard: Cmd shortcuts, Cmd+Tab" ;;
         drag)     echo "Three-finger drag" ;;
         gestures) echo "Four-finger gestures (workspaces, window list, show desktop)" ;;
     esac

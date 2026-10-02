@@ -19,8 +19,8 @@ QUIRKS=/etc/libinput/local-overrides.quirks
 as_user() { sudo -u "$U" -H "$@"; }
 step()    { printf '\n==> %s\n' "$*"; }
 
-step "Packages: libxdo3 (three-finger drag), python3-xlib (keyd app mapper)"
-apt-get install -y libxdo3 python3-xlib
+step "Packages: libxdo3 (three-finger drag)"
+apt-get install -y libxdo3
 
 step "keyd $KEYD_TAG: build and install"
 if [ ! -x "$KEYD_SRC/bin/keyd" ]; then
@@ -81,11 +81,10 @@ usermod -aG keyd,input "$U"
 
 step "User files"
 A=$H/.config/autostart
-as_user mkdir -p "$A" "$H/.config/keyd" "$H/.local/bin" "$H/.local/share/applications" "$BACKUP/autostart"
+as_user mkdir -p "$A" "$H/.local/bin" "$H/.local/share/applications" "$BACKUP/autostart"
 if [ -f "$A/Swap Cmd and Ctrl.desktop" ]; then
     mv "$A/Swap Cmd and Ctrl.desktop" "$BACKUP/autostart/"   # keyd replaces the setxkbmap swap
 fi
-as_user install -m644 "$HERE/keyd/app.conf" "$H/.config/keyd/app.conf"
 as_user install -m755 "$HERE/macmode" "$H/.local/bin/macmode"
 
 # macmode starts the touchegg client itself, so hide the system autostart entry.

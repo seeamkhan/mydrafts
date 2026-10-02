@@ -35,6 +35,8 @@ So nothing is actually broken. You never need a "real Ctrl" the way macOS someti
 
 ## Part 1: Keyboard (Cmd+Tab, Ctrl behaviour, Shift+Enter)
 
+> **Update after install:** the terminal-only rules below were dropped. The `keyd-application-mapper` helper rescans the window tree on every X event (terminal title changes included), which cost a constant ~11% CPU on this laptop. In the terminal, Cmd now acts like plain Ctrl: copy/paste is Cmd+Shift+C/V, and a newline in Claude Code is Option+Enter (or Ctrl+J). Also, `k:05ac:0291` turned out to grab the trackpad too; the config now uses the keyboard's full keyd id.
+
 ### Option A (recommended): `keyd`, a true Mac-style remap
 
 `keyd` is a small C daemon (~100 KB) that remaps at the kernel input level. It isn't in Mint 22's apt repos, so I'd build it from the official source (gcc/make/git are already installed) and run it as a systemd service. It **replaces** the setxkbmap autostart.
@@ -60,7 +62,7 @@ Terminal-only rules (keyd's small `keyd-application-mapper` helper, which switch
 
 Side effects I'll handle:
 - libinput's "disable touchpad while typing" stops recognising keyboards behind keyd. I'll fix that with a one-line libinput quirk that marks the keyd virtual keyboard as internal.
-- keyd only applies to the internal Apple keyboard (`05ac:0291`). External keyboards stay a normal PC layout (see Decisions).
+- keyd only applies to the internal Apple keyboard (full keyd id `05ac:0291:f2d1f5c2`; plain `05ac:0291` also grabs the trackpad and kills it). External keyboards stay a normal PC layout (see Decisions).
 - Easy undo: `sudo systemctl disable --now keyd`, then re-enable the old autostart entry.
 
 ### Option B: minimal, no new software
@@ -141,7 +143,7 @@ Things that need you physically at the keyboard: pressing F3/F4 for `xev`, swipi
 | Component | RAM | CPU |
 |---|---|---|
 | `keyd` daemon (C) | ~1–2 MB | ~0%: sleeps until a key is pressed, microseconds per key, no noticeable latency |
-| `keyd-application-mapper` (Python, terminal-only rules) | ~15–25 MB | ~0%: wakes only when window focus changes |
+| ~~`keyd-application-mapper`~~ (dropped) | ~16 MB measured | **~11% measured**, so removed |
 | 3-finger-drag helper | a few MB | small, only while fingers are on the trackpad |
 | Removed: `setxkbmap` autostart | – | – |
 
