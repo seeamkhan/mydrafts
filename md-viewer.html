@@ -1,0 +1,747 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MD Viewer — drop a markdown file</title>
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+:root{
+  --bg:#0d1017;--surface:#161b22;--surface-2:#1c2129;--card:#21262d;--border:#30363d;
+  --text:#e6edf3;--dim:#8b949e;--accent:#58a6ff;--green:#3fb950;--green-dim:#238636;
+  --yellow:#d29922;--red:#f85149;--orange:#d18616;--purple:#bc8cff;
+  --code-bg:rgba(110,118,129,0.2);--glow:rgba(88,166,255,0.10);
+  --note-bg:#0d1f0d;--note-border:#2a4a2a;
+}
+body.light{
+  --bg:#ffffff;--surface:#f6f8fa;--surface-2:#eaeef2;--card:#f6f8fa;--border:#d0d7de;
+  --text:#1f2328;--dim:#636c76;--accent:#0969da;--green:#1a7f37;--green-dim:#dafbe1;
+  --yellow:#9a6700;--red:#cf222e;--orange:#bc4c00;--purple:#8250df;
+  --code-bg:rgba(175,184,193,0.2);--glow:rgba(9,105,218,0.08);
+  --note-bg:#e8f5ec;--note-border:#bfe0c8;
+}
+html,body{height:100%}
+body{font-family:-apple-system,'Segoe UI',Helvetica,Arial,sans-serif;background:var(--bg);color:var(--text);line-height:1.7;font-size:15px;transition:background .2s,color .2s}
+a{color:var(--accent);text-decoration:none}
+a:hover{text-decoration:underline}
+
+/* Toolbar */
+.toolbar{position:sticky;top:0;z-index:100;background:rgba(22,27,34,0.90);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);border-bottom:1px solid var(--border);padding:9px 18px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;box-shadow:0 1px 8px rgba(0,0,0,0.25)}
+body.light .toolbar{background:rgba(246,248,250,0.92)}
+.toolbar .brand{font-weight:700;font-size:.9rem;color:var(--accent);margin-right:4px;display:flex;align-items:center;gap:6px}
+.toolbar button,.toolbar label{background:var(--card);color:var(--text);border:1px solid var(--border);padding:6px 13px;border-radius:8px;cursor:pointer;font-size:.82rem;white-space:nowrap;transition:all .15s ease;display:inline-flex;align-items:center;gap:5px}
+.toolbar button:hover,.toolbar label:hover{background:var(--surface-2);border-color:var(--accent)}
+.toolbar .btn-primary{background:var(--accent);color:#fff;border-color:var(--accent);font-weight:600}
+.toolbar .btn-primary:hover{filter:brightness(1.1)}
+.toolbar .btn-save{color:var(--green);border-color:rgba(63,185,80,.4)}
+.toolbar .btn-save:hover{background:rgba(63,185,80,.12);border-color:var(--green)}
+.toolbar .btn-export{color:var(--purple);border-color:rgba(188,140,255,.4)}
+.toolbar .btn-export:hover{background:rgba(188,140,255,.12);border-color:var(--purple)}
+
+/* Export modal */
+.modal-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,0.66);backdrop-filter:blur(4px);-webkit-backdrop-filter:blur(4px);z-index:600;justify-content:center;align-items:center;padding:20px}
+.modal-overlay.open{display:flex}
+.modal{background:var(--surface);border:1px solid var(--border);border-radius:12px;max-width:760px;width:100%;max-height:84vh;display:flex;flex-direction:column;box-shadow:0 12px 40px rgba(0,0,0,0.45)}
+.modal-header{padding:13px 18px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center}
+.modal-header h3{font-size:1rem;color:var(--purple)}
+.modal-header button{background:none;border:none;color:var(--dim);font-size:1.5rem;line-height:1;cursor:pointer;padding:0 4px;transition:color .12s}
+.modal-header button:hover{color:var(--text)}
+.modal-body{padding:14px 18px;overflow-y:auto;flex:1;display:flex;flex-direction:column;gap:10px}
+.modal-hint{font-size:.82rem;color:var(--dim);margin:0}
+.modal-body textarea{width:100%;min-height:340px;flex:1;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:12px;font-family:'Cascadia Code','Fira Code','Consolas',monospace;font-size:.82rem;line-height:1.55;resize:vertical}
+.modal-footer{padding:12px 18px;border-top:1px solid var(--border);display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap}
+.modal-footer button{background:var(--card);color:var(--text);border:1px solid var(--border);padding:7px 15px;border-radius:8px;cursor:pointer;font-size:.83rem;transition:all .12s}
+.modal-footer button:hover{background:var(--surface-2);border-color:var(--accent)}
+.modal-footer button.btn-primary{background:var(--accent);color:#fff;border-color:var(--accent);font-weight:600}
+.modal-footer button.btn-primary:hover{filter:brightness(1.1)}
+.toolbar .separator{width:1px;height:22px;background:var(--border);margin:0 3px}
+.toolbar .spacer{flex:1}
+.toolbar .status{font-size:.74rem;color:var(--dim);padding:4px 8px;max-width:340px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#file-input{display:none}
+
+/* Content */
+.content{max-width:900px;margin:0 auto;padding:30px 32px 120px}
+.content h1{font-size:1.9rem;margin:28px 0 16px;padding-bottom:.3em;border-bottom:1px solid var(--border);line-height:1.3;color:var(--text)}
+.content h2{font-size:1.45rem;margin:26px 0 14px;padding-bottom:.3em;border-bottom:1px solid var(--border);line-height:1.3;color:var(--text)}
+.content h3{font-size:1.2rem;margin:22px 0 10px;color:var(--orange)}
+.content h4{font-size:1.02rem;margin:18px 0 8px;color:var(--purple)}
+.content h5,.content h6{font-size:.9rem;margin:14px 0 6px;color:var(--dim)}
+.content p{margin:12px 0}
+.content strong{font-weight:700;color:var(--text)}
+.content em{font-style:italic}
+.content blockquote{border-left:4px solid var(--border);padding:2px 18px;margin:14px 0;color:var(--dim)}
+.content pre{background:var(--card);border:1px solid var(--border);border-radius:8px;padding:14px 18px;overflow-x:auto;margin:14px 0;font-size:.85rem;line-height:1.5}
+.content code{background:var(--code-bg);padding:.2em .4em;border-radius:5px;font-size:.88em;font-family:'Cascadia Code','Fira Code','Consolas',monospace}
+.content pre code{background:none;padding:0;font-size:1em}
+.content hr{border:none;border-top:1px solid var(--border);margin:26px 0}
+.content table{border-collapse:collapse;margin:16px 0;font-size:.88rem;display:block;overflow-x:auto;max-width:100%}
+.content th,.content td{border:1px solid var(--border);padding:7px 13px;text-align:left}
+.content th{background:var(--card);font-weight:600}
+.content tr:nth-child(2n){background:var(--surface)}
+.content ul,.content ol{padding-left:1.6em;margin:10px 0}
+.content li{margin:5px 0}
+.content li>p{margin:6px 0}
+.content img{max-width:100%;border-radius:8px}
+.content details{margin:10px 0;background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:8px 14px}
+.content summary{cursor:pointer;font-weight:600}
+.content a code{color:var(--accent)}
+
+/* Interactive task-list checkboxes */
+.content li.task-li{list-style:none;margin-left:-1.2em;display:flex;align-items:flex-start;gap:9px;padding:3px 8px;border-radius:7px;transition:background .12s}
+.content li.task-li:hover{background:var(--glow)}
+.content li.task-li>input[type=checkbox]{margin-top:.42em;width:16px;height:16px;min-width:16px;accent-color:var(--green);cursor:pointer}
+.content li.task-li.done{color:var(--dim)}
+.content li.task-li.done>*:not(input):not(.note-trigger){text-decoration:line-through}
+
+/* Notes / comments */
+.note-trigger{opacity:0;font-size:.7rem;color:var(--accent);cursor:pointer;margin-left:8px;padding:1px 7px;border-radius:5px;background:rgba(88,166,255,.14);white-space:nowrap;user-select:none;vertical-align:middle;transition:opacity .12s,background .12s}
+.notable:hover>.note-trigger{opacity:.85}
+.note-trigger:hover{opacity:1;background:rgba(88,166,255,.28)}
+.note-box{background:var(--note-bg);border:1px solid var(--note-border);border-radius:8px;margin:6px 0 8px 12px;padding:9px 11px;display:flex;gap:8px;align-items:flex-start}
+.note-box textarea{flex:1;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:7px 10px;font-size:.85rem;font-family:inherit;line-height:1.5;resize:vertical;min-height:38px}
+.note-box .note-btns{display:flex;flex-direction:column;gap:5px}
+.note-box button{background:var(--card);color:var(--green);border:1px solid var(--note-border);border-radius:6px;padding:4px 13px;cursor:pointer;font-size:.78rem;white-space:nowrap;transition:filter .12s}
+.note-box button:hover{filter:brightness(1.18)}
+.note-box button.del{color:var(--red);border-color:var(--border)}
+.saved-note{background:var(--note-bg);border-left:3px solid var(--green);margin:4px 0 4px 12px;padding:6px 12px;border-radius:0 7px 7px 0;display:flex;align-items:flex-start;gap:10px;font-size:.85rem}
+.saved-note .n-text{flex:1;color:var(--green);white-space:pre-wrap;line-height:1.55}
+.saved-note .n-time{font-size:.68rem;color:var(--dim);white-space:nowrap;margin-top:2px}
+.saved-note .n-del{cursor:pointer;color:var(--red);opacity:.4;font-size:.8rem;user-select:none;transition:opacity .12s}
+.saved-note .n-del:hover{opacity:1}
+
+/* In-doc anchor links: offset for sticky toolbar + a brief highlight on jump */
+.content [id]{scroll-margin-top:64px}
+@keyframes anchorFlash{0%{background:rgba(88,166,255,.25)}100%{background:transparent}}
+.anchor-flash{animation:anchorFlash 1.3s ease-out;border-radius:6px}
+
+/* Drop overlay */
+#drop{position:fixed;inset:0;z-index:500;display:none;align-items:center;justify-content:center;background:rgba(13,16,23,0.82);backdrop-filter:blur(3px)}
+#drop.show{display:flex}
+#drop .box{border:3px dashed var(--accent);border-radius:18px;padding:60px 90px;text-align:center;background:var(--surface);box-shadow:0 12px 40px rgba(0,0,0,.5)}
+#drop .box .icon{font-size:3.4rem;margin-bottom:12px}
+#drop .box h2{color:var(--accent);font-size:1.4rem;margin-bottom:6px}
+#drop .box p{color:var(--dim);font-size:.9rem}
+
+/* Empty state */
+.empty{text-align:center;padding:90px 20px;color:var(--dim);max-width:640px;margin:0 auto}
+.empty .big{font-size:3.6rem;margin-bottom:10px}
+.empty h1{color:var(--accent);font-size:1.7rem;margin-bottom:8px;border:none}
+.empty p{margin:10px 0;font-size:.98rem}
+.empty .card{margin-top:26px;text-align:left;background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:20px 26px}
+.empty .card h3{color:var(--text);font-size:1rem;margin-bottom:10px}
+.empty .card ol{padding-left:22px}
+.empty .card li{margin:7px 0;font-size:.9rem}
+.empty kbd{background:var(--card);border:1px solid var(--border);border-radius:5px;padding:1px 7px;font-size:.82rem;font-family:inherit}
+.empty kbd.click{cursor:pointer;transition:all .12s}
+.empty kbd.click:hover{border-color:var(--accent);color:var(--accent);background:var(--surface-2)}
+
+/* Author signature footer */
+.author-sig{font-size:.72rem;color:var(--dim);text-align:center;margin-top:60px;padding-top:20px;border-top:1px solid var(--border);opacity:.6;transition:opacity .2s}
+.author-sig:hover{opacity:1}
+
+/* Go-to-top floating button */
+#go-top{position:fixed;bottom:28px;right:28px;z-index:90;width:44px;height:44px;border-radius:50%;border:1px solid var(--border);background:var(--surface);color:var(--accent);font-size:1.3rem;cursor:pointer;display:flex;align-items:center;justify-content:center;box-shadow:0 3px 12px rgba(0,0,0,0.3);opacity:0;pointer-events:none;transition:opacity .25s,transform .25s,background .15s;transform:translateY(12px)}
+#go-top.visible{opacity:1;pointer-events:auto;transform:translateY(0)}
+#go-top:hover{background:var(--accent);color:#fff;border-color:var(--accent)}
+body.light #go-top{box-shadow:0 3px 12px rgba(0,0,0,0.12)}
+
+@media print{
+  .toolbar,#drop,.note-trigger,.note-box,#go-top,.author-sig{display:none!important}
+  body{background:#fff;color:#000;font-size:12px}
+  .content{max-width:100%;padding:0}
+  .content li.task-li:hover{background:none}
+}
+</style>
+</head>
+<body>
+
+<div class="toolbar">
+  <span class="brand">📄 MD Viewer</span>
+  <label for="file-input">📂 Open file</label>
+  <input type="file" id="file-input" accept=".md,.markdown,.txt,.mdx">
+  <button onclick="reloadFile()" id="reload-btn" style="display:none" title="Re-read the same file from disk (one click, no re-picking)">🔄 Reload</button>
+  <button onclick="pasteMd()">📋 Paste</button>
+  <div class="separator"></div>
+  <button onclick="saveHtml()" class="btn-save">💾 Save HTML</button>
+  <button onclick="showExport()" class="btn-export">⬆ Export for AI</button>
+  <button onclick="window.print()">🖨 Print</button>
+  <div class="separator"></div>
+  <button onclick="toggleTheme()" id="theme-btn">🌓 Theme</button>
+  <button onclick="clearView()">✕ Clear</button>
+  <span class="spacer"></span>
+  <span class="status" id="status">No file — drop a .md anywhere</span>
+</div>
+
+<div class="content" id="content"></div>
+
+<div class="author-sig">MD Viewer by Abdul Quayum</div>
+
+<button id="go-top" title="Go to top" aria-label="Scroll to top">↑</button>
+
+<div id="drop"><div class="box">
+  <div class="icon">📥</div>
+  <h2>Drop your markdown file</h2>
+  <p>.md · .markdown · .txt · .mdx</p>
+</div></div>
+
+<div class="modal-overlay" id="export-modal" onclick="if(event.target===this)closeExport()">
+  <div class="modal">
+    <div class="modal-header">
+      <h3>⬆ Export for AI</h3>
+      <button onclick="closeExport()" title="Close">&times;</button>
+    </div>
+    <div class="modal-body">
+      <p class="modal-hint">Your ticked boxes and notes for <strong id="export-file"></strong>, ready to paste into a chat so an AI can act on them.</p>
+      <textarea id="export-text" readonly spellcheck="false"></textarea>
+    </div>
+    <div class="modal-footer">
+      <button class="btn-primary" onclick="copyExport()">📋 Copy to clipboard</button>
+      <button onclick="downloadExport()">⬇ Download .txt</button>
+      <button onclick="closeExport()">Close</button>
+    </div>
+  </div>
+</div>
+
+<script>
+/* ============================================================
+   MD Viewer — standalone, multi-tab safe markdown renderer.
+   Each browser tab is INDEPENDENT: the loaded file lives in
+   sessionStorage (per-tab), so opening a different file in a
+   new tab never overwrites another tab. Checkbox state is
+   persisted in localStorage keyed BY FILENAME, so files don't
+   clash and re-opening the same file restores your ticks.
+   ============================================================ */
+
+const contentEl = document.getElementById('content');
+let currentRaw = '';
+let currentName = '';
+let fileHandle = null;   // FileSystemFileHandle — enables one-click Reload from disk
+
+const EMPTY_HTML = `
+  <div class="empty">
+    <div class="big">📄</div>
+    <h1>Markdown Viewer</h1>
+    <p>Drag a <strong>.md</strong> file anywhere on this page to render it.</p>
+    <div class="card">
+      <h3>How to use</h3>
+      <ol>
+        <li><strong>Drag &amp; drop</strong> any markdown file onto this window, or click <kbd class="click" onclick="openFilePicker()">📂 Open file</kbd>.</li>
+        <li>Want a second file at the same time? <strong>Open this page again in a new browser tab</strong> and drop a different file there. Tabs are fully independent — they never overwrite each other.</li>
+        <li>The browser tab label shows the file name, so you can tell your tabs apart.</li>
+        <li>Checkboxes are clickable and <strong>hover any line to add a “+ note”</strong> — both are remembered per file. In-doc links (e.g. a table of contents) jump to their section.</li>
+        <li>Use <kbd class="click" onclick="saveHtml()">💾 Save HTML</kbd> to keep a standalone HTML copy (notes included), or <kbd class="click" onclick="window.print()">🖨 Print</kbd> to save as PDF.</li>
+      </ol>
+    </div>
+  </div>`;
+
+/* ---------- Render ---------- */
+function render(md, name){
+  currentRaw = md || '';
+  currentName = name || 'untitled.md';
+
+  if(typeof marked === 'undefined'){
+    contentEl.innerHTML = `<div class="empty"><div class="big">⚠️</div>
+      <h1>Renderer failed to load</h1>
+      <p>The markdown engine (marked.js) could not load from the CDN.
+      Check your network/proxy, then reload this page.</p></div>`;
+    return;
+  }
+
+  marked.setOptions({ gfm:true, breaks:true, headerIds:false, mangle:false });
+  contentEl.innerHTML = marked.parse(currentRaw);
+
+  assignHeadingIds();   // so in-doc anchor links ([...](#slug)) work
+  enhanceCheckboxes();
+  enhanceNotes();
+  document.title = currentName + ' — MD Viewer';
+  persistCurrent();
+  lastLoadedName = currentName;
+  document.getElementById('reload-btn').style.display = '';
+  setStatus('📄 ' + currentName);
+  window.scrollTo(0,0);
+}
+
+/* Make GFM task-list checkboxes clickable + persist per file */
+function enhanceCheckboxes(){
+  const key = 'mdviewer:checks:' + currentName;
+  let saved = {};
+  try { saved = JSON.parse(localStorage.getItem(key) || '{}'); } catch(e){}
+
+  const boxes = contentEl.querySelectorAll('li > input[type="checkbox"]');
+  boxes.forEach(box => {
+    const li = box.closest('li');
+    if(!li) return;
+    li.classList.add('task-li');
+    box.disabled = false;
+    const id = stableKey(li);
+    if(id in saved) box.checked = saved[id];
+    li.classList.toggle('done', box.checked);
+    box.addEventListener('change', () => {
+      saved[id] = box.checked;
+      li.classList.toggle('done', box.checked);
+      try { localStorage.setItem(key, JSON.stringify(saved)); } catch(e){}
+      setStatus('✓ saved · ' + currentName);
+    });
+  });
+}
+
+/* Stable per-element key from its text, ignoring injected UI (triggers, notes, checkbox) */
+function stableKey(el){
+  const c = el.cloneNode(true);
+  c.querySelectorAll('.note-trigger,.note-box,.saved-note,input').forEach(n => n.remove());
+  return (c.textContent || '').trim().replace(/\s+/g,' ').slice(0,140);
+}
+
+/* Text that belongs to THIS element only (excludes nested lists) — used to detect wrapper <li>s */
+function ownText(el){
+  const c = el.cloneNode(true);
+  c.querySelectorAll('ul,ol,.note-trigger,.note-box,.saved-note,input').forEach(n => n.remove());
+  return (c.textContent || '').trim();
+}
+
+/* ---------- Heading anchor IDs + in-doc link navigation ---------- */
+// GitHub-style slug: lowercase, drop punctuation/emoji, spaces -> hyphens (no collapsing)
+function slugify(text){
+  return (text || '').trim().toLowerCase()
+    .replace(/[^\w\- ]/g,'')
+    .replace(/\s/g,'-');
+}
+function assignHeadingIds(){
+  const used = {};
+  contentEl.querySelectorAll('h1,h2,h3,h4,h5,h6').forEach(h => {
+    const base = slugify(h.textContent);
+    if(!base) return;
+    let id = base, n = 0;
+    while(used[id]) id = base + '-' + (++n);   // GitHub-style de-dup on collisions
+    used[id] = true;
+    h.id = id;
+  });
+}
+function normAnchor(s){ return (s || '').toLowerCase().replace(/[^a-z0-9]/g,''); }
+function findAnchorTarget(raw){
+  let el = document.getElementById(raw);
+  if(el) return el;
+  const want = normAnchor(raw);
+  if(!want) return null;
+  const heads = [...contentEl.querySelectorAll('h1,h2,h3,h4,h5,h6')];
+  el = heads.find(h => normAnchor(h.id) === want)           // exact after normalisation
+    || heads.find(h => normAnchor(h.id).startsWith(want));  // tolerate hyphen drift
+  if(el) return el;
+  // last resort: the link's words are an ordered subset of a heading's words
+  // (handles imperfect TOC links that drop/rename a word, e.g. missing "summary")
+  const words = raw.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
+  if(words.length >= 2){
+    el = heads.find(h => {
+      const ht = (h.id || '').split('-').filter(Boolean);
+      let i = 0;
+      for(const t of ht){ if(t === words[i]) i++; if(i === words.length) break; }
+      return i === words.length;
+    });
+  }
+  return el || null;
+}
+function onContentClick(e){
+  const a = e.target.closest('a[href^="#"]');
+  if(!a || !contentEl.contains(a)) return;
+  let raw;
+  try { raw = decodeURIComponent(a.getAttribute('href').slice(1)); }
+  catch(_) { raw = a.getAttribute('href').slice(1); }
+  if(!raw) return;
+  const target = findAnchorTarget(raw);
+  if(target){
+    e.preventDefault();
+    target.scrollIntoView({ behavior:'smooth', block:'start' });
+    target.classList.remove('anchor-flash'); void target.offsetWidth; target.classList.add('anchor-flash');
+    try { history.replaceState(null, '', '#' + raw); } catch(_){}
+  } else {
+    setStatus('⚠️ no section matches #' + raw);
+  }
+}
+
+/* ---------- Notes / comments (clickable "+ note", persisted per file) ---------- */
+let noteStore = {};
+let noteStorageKey = '';
+let noteSeq = 0;
+
+function enhanceNotes(){
+  noteStorageKey = 'mdviewer:notes:' + currentName;
+  try { noteStore = JSON.parse(localStorage.getItem(noteStorageKey) || '{}'); } catch(e){ noteStore = {}; }
+
+  const seen = Object.create(null);
+  contentEl.querySelectorAll('li, p, h1,h2,h3,h4,h5,h6').forEach(el => {
+    if(el.tagName === 'P' && el.closest('li')) return;   // avoid dup triggers on loose-list items
+    // skip a list item that only wraps a nested list — its text lives in the child items
+    if(el.tagName === 'LI' && !ownText(el) && el.querySelector(':scope > ul, :scope > ol')) return;
+    const base = stableKey(el);
+    if(!base) return;
+    // disambiguate repeated text so notes never merge/duplicate across identical lines
+    const n = (seen[base] = (seen[base] || 0) + 1);
+    const key = n === 1 ? base : base + '::' + n;
+    el.classList.add('notable');
+    el.dataset.noteKey = key;
+    const trig = document.createElement('span');
+    trig.className = 'note-trigger';
+    trig.textContent = '+ note';
+    trig.title = 'Add a note';
+    trig.addEventListener('click', ev => { ev.stopPropagation(); ev.preventDefault(); openNoteEditor(el); });
+    el.appendChild(trig);
+    (noteStore[key] || []).forEach(note => insertSavedNote(el, key, note));
+  });
+}
+
+// last node in the run of (el + its following note/editor boxes) — where new stuff is appended
+function anchorAfter(el){
+  let node = el;
+  while(node.nextElementSibling &&
+        (node.nextElementSibling.classList.contains('saved-note') ||
+         node.nextElementSibling.classList.contains('note-box'))){
+    node = node.nextElementSibling;
+  }
+  return node;
+}
+
+function insertSavedNote(el, key, note){
+  const div = document.createElement('div');
+  div.className = 'saved-note';
+  const txt = document.createElement('span');  txt.className = 'n-text'; txt.textContent = note.text;
+  const time = document.createElement('span'); time.className = 'n-time'; time.textContent = note.time;
+  const del = document.createElement('span');  del.className = 'n-del'; del.textContent = '✕'; del.title = 'Delete note';
+  del.addEventListener('click', () => deleteNote(key, note.id, div));
+  div.append(txt, time, del);
+  anchorAfter(el).insertAdjacentElement('afterend', div);
+}
+
+function openNoteEditor(el){
+  const key = el.dataset.noteKey;
+  const after = anchorAfter(el);
+  if(after.nextElementSibling && after.nextElementSibling.classList.contains('note-box')){
+    after.nextElementSibling.querySelector('textarea').focus(); return;
+  }
+  const box = document.createElement('div'); box.className = 'note-box';
+  const ta = document.createElement('textarea');
+  ta.placeholder = 'Add a note…  (Ctrl+Enter to save · Esc to cancel)';
+  const btns = document.createElement('div'); btns.className = 'note-btns';
+  const save = document.createElement('button');  save.textContent = 'Save';
+  const cancel = document.createElement('button'); cancel.className = 'del'; cancel.textContent = 'Cancel';
+  save.addEventListener('click', () => commitNote(el, key, box, ta.value));
+  cancel.addEventListener('click', () => box.remove());
+  ta.addEventListener('keydown', ev => {
+    if(ev.key === 'Enter' && (ev.ctrlKey || ev.metaKey)){ ev.preventDefault(); commitNote(el, key, box, ta.value); }
+    else if(ev.key === 'Escape'){ box.remove(); }
+  });
+  btns.append(save, cancel);
+  box.append(ta, btns);
+  after.insertAdjacentElement('afterend', box);
+  ta.focus();
+}
+
+function commitNote(el, key, box, value){
+  const text = (value || '').trim();
+  if(!text){ box.remove(); return; }
+  const note = {
+    id: 'n' + Date.now().toString(36) + (noteSeq++),
+    text,
+    time: new Date().toLocaleString([], { month:'short', day:'numeric', hour:'2-digit', minute:'2-digit' })
+  };
+  if(!noteStore[key]) noteStore[key] = [];
+  noteStore[key].push(note);
+  persistNotes();
+  box.remove();
+  insertSavedNote(el, key, note);
+  setStatus('📝 note saved · ' + currentName);
+}
+
+function deleteNote(key, id, div){
+  if(noteStore[key]){
+    noteStore[key] = noteStore[key].filter(n => n.id !== id);
+    if(!noteStore[key].length) delete noteStore[key];
+    persistNotes();
+  }
+  div.remove();
+  setStatus('🗑 note deleted · ' + currentName);
+}
+
+function persistNotes(){
+  try { localStorage.setItem(noteStorageKey, JSON.stringify(noteStore)); } catch(e){}
+}
+
+/* ---------- Per-tab persistence (sessionStorage = isolated per tab) ---------- */
+function persistCurrent(){
+  try { sessionStorage.setItem('mdviewer:current', JSON.stringify({name:currentName, raw:currentRaw})); } catch(e){}
+}
+
+/* ---------- File loading ---------- */
+async function openFilePicker(){
+  // Prefer the modern File System Access API — it gives us a FileSystemFileHandle
+  // that we can re-read later (one-click Reload), and Edge/Chrome support it.
+  if(window.showOpenFilePicker){
+    try {
+      const [handle] = await window.showOpenFilePicker({
+        types: [{ description: 'Markdown files', accept: { 'text/markdown': ['.md','.markdown','.txt','.mdx'] } }],
+        multiple: false
+      });
+      fileHandle = handle;
+      const file = await handle.getFile();
+      readFile(file);
+      return;
+    } catch(e){
+      if(e.name === 'AbortError') return; // user cancelled the picker
+      // fall through to legacy <input> picker
+    }
+  }
+  document.getElementById('file-input').click();
+}
+
+async function reloadFile(){
+  // If we have a stored FileSystemFileHandle, re-read the file directly from disk
+  if(fileHandle){
+    try {
+      const file = await fileHandle.getFile();
+      readFile(file);
+      setStatus('🔄 reloaded from disk · ' + file.name);
+      return;
+    } catch(e){
+      // Handle may have been revoked or file deleted
+      fileHandle = null;
+      setStatus('⚠️ handle expired — pick the file again');
+    }
+  }
+  // Fallback: open the file picker
+  openFilePicker();
+}
+
+function readFile(file){
+  if(!file) return;
+  // When re-loading the same filename, offer to clear stale annotations
+  if(file.name === currentName || file.name === lastLoadedName){
+    const checksKey = 'mdviewer:checks:' + file.name;
+    const notesKey  = 'mdviewer:notes:'  + file.name;
+    let hasState = false;
+    try { hasState = Object.keys(JSON.parse(localStorage.getItem(checksKey) || '{}')).length > 0; } catch(e){}
+    if(!hasState) try { hasState = Object.keys(JSON.parse(localStorage.getItem(notesKey) || '{}')).length > 0; } catch(e){}
+    if(hasState && confirm(
+      'Clear previous notes and checkbox states for "' + file.name + '"?\n\n' +
+      'OK = fresh view (recommended after AI updated the file)\n' +
+      'Cancel = keep your old annotations'
+    )){
+      try { localStorage.removeItem(checksKey); } catch(e){}
+      try { localStorage.removeItem(notesKey); }  catch(e){}
+      noteStore = {};
+    }
+  }
+  const reader = new FileReader();
+  reader.onload = e => render(e.target.result, file.name);
+  reader.onerror = () => setStatus('⚠️ could not read file');
+  reader.readAsText(file);
+}
+let lastLoadedName = '';
+
+document.getElementById('file-input').addEventListener('change', e => {
+  if(e.target.files[0]) readFile(e.target.files[0]);
+  e.target.value = '';
+});
+
+async function pasteMd(){
+  try {
+    const txt = await navigator.clipboard.readText();
+    if(!txt.trim()){ setStatus('clipboard is empty'); return; }
+    const stamp = new Date().toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'});
+    render(txt, 'pasted-' + stamp + '.md');
+  } catch(e){ setStatus('⚠️ clipboard blocked — use 📂 Open file'); }
+}
+
+/* ---------- Save a standalone HTML snapshot to disk ---------- */
+function saveHtml(){
+  if(!currentRaw){ setStatus('nothing to save yet — load a file first'); return; }
+  // full-page stylesheet, so the export looks exactly like the viewer, no CDN needed
+  const css = document.querySelector('style').textContent;
+  const clone = contentEl.cloneNode(true);
+  // drop interactive-only bits; keep saved notes (they're real content)
+  clone.querySelectorAll('.note-trigger, .note-box').forEach(n => n.remove());
+  clone.querySelectorAll('.notable').forEach(n => n.classList.remove('notable'));
+  // freeze checkboxes as a static snapshot of their current ticked state
+  clone.querySelectorAll('input[type="checkbox"]').forEach(b => {
+    b.setAttribute('disabled','');
+    if(b.checked) b.setAttribute('checked',''); else b.removeAttribute('checked');
+  });
+  const themeClass = document.body.classList.contains('light') ? 'light' : '';
+  const esc = s => s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  const doc =
+`<!DOCTYPE html>
+<html lang="en"><head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>${esc(currentName)}</title>
+<!-- Rendered from ${esc(currentName)} by MD Viewer. Standalone: no scripts, no CDN. -->
+<style>${css}</style>
+</head>
+<body class="${themeClass}">
+${clone.outerHTML}
+</body></html>`;
+  const base = currentName.replace(/\.(md|markdown|txt|mdx)$/i,'') || 'document';
+  downloadFile(doc, base + '.html', 'text/html');
+  setStatus('💾 saved ' + base + '.html (check Downloads)');
+}
+
+function downloadFile(text, name, type){
+  const blob = new Blob([text], { type: type + ';charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = name;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 2000);
+}
+
+/* ---------- Export for AI (checked items + notes as pasteable text) ---------- */
+function plainText(el, max){
+  const c = el.cloneNode(true);
+  c.querySelectorAll('.note-trigger,.note-box,.saved-note').forEach(n => n.remove());
+  const t = (c.textContent || '').replace(/\s+/g,' ').trim();
+  return max ? t.slice(0, max) : t;
+}
+function buildExportText(){
+  const readJSON = k => { try { return JSON.parse(localStorage.getItem(k) || '{}'); } catch(e){ return {}; } };
+  const checks = readJSON('mdviewer:checks:' + currentName);
+  const notes  = readJSON('mdviewer:notes:'  + currentName);
+  const L = [];
+  L.push('# ' + currentName + ' — viewer state');
+  L.push('Exported: ' + new Date().toLocaleString());
+  L.push('');
+
+  // Currently checked task items (full picture, read from the live DOM)
+  const done = [...contentEl.querySelectorAll('li.task-li')]
+    .filter(li => { const b = li.querySelector('input[type="checkbox"]'); return b && b.checked; })
+    .map(li => plainText(li, 240));
+  if(done.length){
+    L.push('## Checked / done (' + done.length + ')');
+    done.forEach(t => L.push('- [x] ' + t));
+    L.push('');
+  }
+
+  // Items you explicitly UN-checked in the viewer (delta vs the file)
+  const undone = Object.entries(checks).filter(([,v]) => v === false).map(([k]) => k);
+  if(undone.length){
+    L.push('## Un-checked in viewer (' + undone.length + ')');
+    undone.forEach(t => L.push('- [ ] ' + t));
+    L.push('');
+  }
+
+  // Notes
+  const noteEntries = Object.entries(notes).filter(([,v]) => Array.isArray(v) && v.length);
+  if(noteEntries.length){
+    L.push('## Notes (' + noteEntries.reduce((n,[,v]) => n + v.length, 0) + ')');
+    noteEntries.forEach(([k, arr]) => {
+      L.push('- On: "' + k.replace(/::\d+$/,'') + '"');
+      arr.forEach(n => L.push('  - [' + n.time + '] ' + n.text));
+    });
+    L.push('');
+  }
+
+  if(!done.length && !undone.length && !noteEntries.length){
+    L.push('No checkboxes ticked and no notes added yet.');
+  }
+  return L.join('\n');
+}
+function showExport(){
+  if(!currentRaw){ setStatus('nothing to export — load a file first'); return; }
+  document.getElementById('export-file').textContent = currentName;
+  document.getElementById('export-text').value = buildExportText();
+  document.getElementById('export-modal').classList.add('open');
+}
+function closeExport(){ document.getElementById('export-modal').classList.remove('open'); }
+async function copyExport(){
+  const text = document.getElementById('export-text').value;
+  try { await navigator.clipboard.writeText(text); setStatus('📋 export copied to clipboard'); }
+  catch(e){
+    const ta = document.getElementById('export-text');
+    ta.focus(); ta.select();
+    try { document.execCommand('copy'); setStatus('📋 export copied'); }
+    catch(_){ setStatus('⚠️ copy blocked — select the text manually'); }
+  }
+}
+function downloadExport(){
+  const base = currentName.replace(/\.(md|markdown|txt|mdx)$/i,'') || 'document';
+  downloadFile(document.getElementById('export-text').value, base + '-state.txt', 'text/plain');
+  setStatus('⬇ export downloaded');
+}
+
+function clearView(){
+  currentRaw=''; currentName=''; lastLoadedName=''; fileHandle=null;
+  contentEl.innerHTML = EMPTY_HTML;
+  try { sessionStorage.removeItem('mdviewer:current'); } catch(e){}
+  document.getElementById('reload-btn').style.display = 'none';
+  document.title = 'MD Viewer — drop a markdown file';
+  setStatus('No file — drop a .md anywhere');
+}
+
+/* ---------- Drag & drop (whole window) ---------- */
+const dropEl = document.getElementById('drop');
+let dragDepth = 0;
+window.addEventListener('dragenter', e => { e.preventDefault(); dragDepth++; dropEl.classList.add('show'); });
+window.addEventListener('dragover',  e => { e.preventDefault(); });
+window.addEventListener('dragleave', e => { e.preventDefault(); if(--dragDepth <= 0){ dragDepth=0; dropEl.classList.remove('show'); } });
+window.addEventListener('drop', e => {
+  e.preventDefault(); dragDepth=0; dropEl.classList.remove('show');
+  const files = e.dataTransfer && e.dataTransfer.files;
+  if(!files || !files.length) return;
+
+  // prefer a markdown-ish file if several were dropped
+  const md = Array.from(files).find(f => /\.(md|markdown|txt|mdx)$/i.test(f.name)) || files[0];
+
+  // Try to grab a FileSystemFileHandle so Reload can re-read from disk later
+  const items = e.dataTransfer.items;
+  if(items){
+    for(const item of items){
+      if(item.kind === 'file' && typeof item.getAsFileSystemHandle === 'function'){
+        item.getAsFileSystemHandle()
+          .then(h => { if(h && h.kind === 'file') fileHandle = h; })
+          .catch(() => {});
+        break;
+      }
+    }
+  }
+
+  readFile(md);
+});
+
+/* ---------- Theme (shared pref, not a per-tab conflict) ---------- */
+function applyTheme(){
+  const light = localStorage.getItem('mdviewer:theme') === 'light';
+  document.body.classList.toggle('light', light);
+}
+function toggleTheme(){
+  const light = !(localStorage.getItem('mdviewer:theme') === 'light');
+  localStorage.setItem('mdviewer:theme', light ? 'light' : 'dark');
+  applyTheme();
+}
+
+/* ---------- Helpers ---------- */
+function setStatus(msg){ document.getElementById('status').textContent = msg; }
+
+/* ---------- Go to top ---------- */
+const goTopBtn = document.getElementById('go-top');
+window.addEventListener('scroll', () => {
+  goTopBtn.classList.toggle('visible', window.scrollY > 300);
+}, {passive:true});
+goTopBtn.addEventListener('click', () => {
+  window.scrollTo({top:0, behavior:'smooth'});
+});
+
+/* ---------- Boot ---------- */
+window.addEventListener('DOMContentLoaded', () => {
+  applyTheme();
+  contentEl.addEventListener('click', onContentClick);   // in-doc anchor links (delegated, survives re-render)
+  document.addEventListener('keydown', e => { if(e.key === 'Escape') closeExport(); });
+  let restored = null;
+  try { restored = JSON.parse(sessionStorage.getItem('mdviewer:current') || 'null'); } catch(e){}
+  if(restored && restored.raw){
+    render(restored.raw, restored.name);   // this TAB's own file only
+    setStatus('📄 ' + restored.name + '  (cached — click 🔄 Reload to refresh from disk)');
+  } else {
+    contentEl.innerHTML = EMPTY_HTML;
+  }
+});
+</script>
+</body>
+</html>
