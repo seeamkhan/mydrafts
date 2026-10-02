@@ -1,0 +1,7 @@
+# Installed to /etc/libinput/local-overrides.quirks.
+# keyd replaces the built-in keyboard with a virtual one; tell libinput it is
+# internal so "disable touchpad while typing" keeps working.
+[keyd virtual keyboard]
+MatchUdevType=keyboard
+MatchName=keyd*keyboard
+AttrKeyboardIntegration=internal

@@ -1,0 +1,130 @@
+#!/usr/bin/env bash
+# macmode: turn the Mac-style tweaks on/off.
+#
+#   macmode                      open the GUI (checklist)
+#   macmode status               show what is on/off
+#   macmode on|off [FEATURE...]  FEATURE = keyboard | drag | gestures | all (default: all)
+#   macmode apply                start whatever is enabled (run at login)
+#
+# Features:
+#   keyboard  keyd Mac layout on the built-in keyboard + terminal rules (Cmd+C/V, Shift+Enter)
+#   drag      three-finger drag (libinput-three-finger-drag)
+#   gestures  touchegg 4-finger gestures
+#
+# Choices survive reboots. "off" for keyboard leaves a plain PC layout
+# (Cmd = Super/Windows key, Ctrl = Ctrl) on every keyboard.
+
+set -u
+
+STATE_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/macmode"   # per-user flags: drag.off, gestures.off
+SYS_FLAG_DIR=/var/lib/macmode                           # keyboard.off (read by keyd.service at boot)
+DRAG_BIN=/usr/local/bin/libinput-three-finger-drag
+DRAG_SPEED=1.0                                          # >1 = faster drag
+FEATURES=(keyboard drag gestures)
+
+mkdir -p "$STATE_DIR"
+
+notify() { command -v notify-send >/dev/null && notify-send -i input-keyboard "Mac Mode" "$1"; }
+detach() { setsid -f "$@" >/dev/null 2>&1 </dev/null; }
+
+# ---------- keyboard ----------
+keyboard_status() { systemctl is-active --quiet keyd && echo on || echo off; }
+
+mapper_start() {
+    pgrep -u "$USER" -f keyd-application-mapper >/dev/null && return
+    [ -f "$HOME/.config/keyd/app.conf" ] && keyd-application-mapper -d >/dev/null 2>&1
+}
+mapper_stop() { pkill -u "$USER" -f keyd-application-mapper; }
+
+# Drop any leftover X-level Cmd/Ctrl swap; keyd does the remapping now.
+xkb_reset() { setxkbmap -option '' -option terminate:ctrl_alt_bksp 2>/dev/null; }
+
+keyboard_on() {
+    rm -f "$SYS_FLAG_DIR/keyboard.off" || { echo "macmode: cannot write $SYS_FLAG_DIR (log out/in after install?)" >&2; return 1; }
+    systemctl start keyd || return 1
+    xkb_reset
+    sleep 0.5
+    mapper_start
+}
+keyboard_off() {
+    mapper_stop
+    touch "$SYS_FLAG_DIR/keyboard.off" || { echo "macmode: cannot write $SYS_FLAG_DIR (log out/in after install?)" >&2; return 1; }
+    systemctl stop keyd
+    xkb_reset
+}
+keyboard_apply() {
+    # keyd.service itself honours the flag at boot, so only fix up the session here.
+    xkb_reset
+    if [ -e "$SYS_FLAG_DIR/keyboard.off" ]; then
+        mapper_stop
+    else
+        systemctl is-active --quiet keyd || systemctl start keyd
+        mapper_start
+    fi
+}
+
+# ---------- three-finger drag ----------
+drag_pids() { pgrep -u "$USER" -f "^$DRAG_BIN"; }
+drag_status() { drag_pids >/dev/null && echo on || echo off; }
+drag_on() {
+    rm -f "$STATE_DIR/drag.off"
+    drag_pids >/dev/null || detach "$DRAG_BIN" "$DRAG_SPEED"
+}
+drag_off() {
+    touch "$STATE_DIR/drag.off"
+    for p in $(drag_pids); do pkill -P "$p"; kill "$p"; done   # also its `libinput debug-events` child
+}
+drag_apply() { if [ -e "$STATE_DIR/drag.off" ]; then drag_off; else drag_on; fi; }
+
+# ---------- gestures (touchegg client; the system daemon stays running, it is idle without a client) ----------
+gestures_status() { pgrep -u "$USER" -x touchegg >/dev/null && echo on || echo off; }
+gestures_on()  { rm -f "$STATE_DIR/gestures.off"; gestures_status | grep -q on || detach touchegg; }
+gestures_off() { touch "$STATE_DIR/gestures.off"; pkill -u "$USER" -x touchegg; }
+gestures_apply() { if [ -e "$STATE_DIR/gestures.off" ]; then gestures_off; else gestures_on; fi; }
+
+# ---------- helpers ----------
+label() {
+    case $1 in
+        keyboard) echo "Mac keyboard: Cmd shortcuts, Cmd+Tab, Mac-style terminal, Shift+Enter" ;;
+        drag)     echo "Three-finger drag" ;;
+        gestures) echo "Four-finger gestures (workspaces, window list, show desktop)" ;;
+    esac
+}
+
+expand() {
+    [ $# -eq 0 ] && set -- all
+    for f in "$@"; do
+        case $f in
+            all) printf '%s\n' "${FEATURES[@]}" ;;
+            keyboard|drag|gestures) echo "$f" ;;
+            *) echo "macmode: unknown feature '$f'" >&2; exit 2 ;;
+        esac
+    done
+}
+
+status() { for f in "${FEATURES[@]}"; do printf '%-9s %s\n' "$f" "$(${f}_status)"; done; }
+
+gui() {
+    local args=() f st chosen
+    for f in "${FEATURES[@]}"; do
+        st=$(${f}_status); [ "$st" = on ] && st=TRUE || st=FALSE
+        args+=("$st" "$f" "$(label "$f")")
+    done
+    chosen=$(zenity --list --checklist --title="Mac Mode" \
+        --text="Ticked = ON. Untick everything for plain PC mode (gaming / max performance)." \
+        --column="On" --column="id" --column="Feature" --hide-column=2 --print-column=2 \
+        --separator=" " --width=560 --height=250 "${args[@]}") || exit 0
+    for f in "${FEATURES[@]}"; do
+        if [[ " $chosen " == *" $f "* ]]; then ${f}_on; else ${f}_off; fi
+    done
+    notify "$(status | sed 's/ \+/: /')"
+}
+
+case ${1:-gui} in
+    gui)    gui ;;
+    status) status ;;
+    on|off) action=$1; shift; for f in $(expand "$@"); do "${f}_${action}"; done; status ;;
+    apply)  sleep 2; for f in "${FEATURES[@]}"; do "${f}_apply"; done ;;
+    -h|--help|help) sed -n '2,17p' "$0" | sed 's/^# \{0,1\}//' ;;
+    *) echo "usage: macmode [gui|status|apply|on|off [keyboard|drag|gestures|all]]" >&2; exit 2 ;;
+esac
