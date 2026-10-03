@@ -1,0 +1,23 @@
+# project-cockpit: check the docs, board and system map on every push, and
+# keep the dashboard as a downloadable artifact. Needs the kit vendored into
+# the repo (`cockpit vendor` creates .cockpit/kit/).
+name: cockpit
+on:
+  push:
+  pull_request:
+jobs:
+  cockpit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python3 .cockpit/kit/cockpit.py check
+      - run: python3 .cockpit/kit/cockpit.py build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cockpit-dashboard
+          path: .cockpit/site
