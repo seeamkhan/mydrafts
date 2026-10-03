@@ -150,8 +150,38 @@ pasted into a fresh session. `cockpit lint <file>` checks the shape.
 | `build [--out DIR] [--probe]` | Static dashboard |
 | `serve [--port 8765] [--probe] [--rebuild-every SECONDS]` | Build and serve on localhost |
 | `vendor` | Copy the kit into `.cockpit/kit/` |
+| `publish --pages [--dry-run] [--allow-findings]` | Public build to the `gh-pages` branch (public repos only) |
+| `publish --tailscale [--port N] [--path /x] [--off]` | Full site on your tailnet only |
 
 Every command takes `--root DIR` (default: current folder).
+
+## Sharing the dashboard
+
+Default: it stays a local folder. Two ways to share it:
+
+| | GitHub Pages | Tailscale |
+|---|---|---|
+| Who can open it | **Anyone on the internet** | Only your own tailnet devices |
+| Works for | Public repos with nothing private | Any repo, including work and personal |
+| What is in it | Docs, board, ADRs, system names and up/down only. No logs, hosts, code paths, off switches or probe detail | Everything, same as the local build |
+| Command | `cockpit publish --pages` | `cockpit publish --tailscale` |
+
+A GitHub Pages site is public even when the repo is private (only GitHub
+Enterprise can put a login in front of it). So `--pages`:
+
+1. refuses unless the GitHub remote is **public** (unknown counts as private);
+2. builds the public version and runs a privacy check over every page
+   (emails, IP addresses, phone numbers, home folders, `.local`/`.ts.net`
+   hosts, redacted secrets). Any hit stops it and lists the lines;
+3. pushes the site to the `gh-pages` branch (a normal push, never force) and
+   prints the one `gh api` line that turns Pages on the first time.
+
+Try `--dry-run` first: it builds and checks, and pushes nothing.
+
+`--tailscale` serves the site at `https://<machine>.<tailnet>.ts.net/cockpit/<project>/`
+with `tailscale serve` (never `funnel`). The macOS Tailscale app cannot serve
+a folder, so on a Mac keep `cockpit serve --port 8765 --rebuild-every 300`
+running and add `--port 8765`; Tailscale then proxies to it. `--off` stops it.
 
 ## Configuration
 
@@ -171,15 +201,16 @@ Every command takes `--root DIR` (default: current folder).
 
 ## Using it at work
 
-- Nothing is sent anywhere: no network calls except the probes you configure.
+- Nothing is sent anywhere: no network calls except the probes you configure,
+  and `publish`, which you run by hand.
 - In a git repo only tracked and unignored markdown is shown, so gitignored
   scratch never reaches the dashboard.
 - Log lines that look like passwords, tokens, API keys or bearer headers are
   redacted. That is best effort: for sensitive projects set
   `"logs_in_site": false` and use `cockpit logs` in a terminal.
 - The dashboard is a folder of static HTML. Keep it local, or publish it
-  somewhere access-controlled (the CI template uploads it as a build artifact,
-  not to a public page).
+  somewhere access-controlled (`publish --tailscale`, or the CI template, which
+  uploads it as a build artifact). `publish --pages` refuses private repos.
 
 ## Requirements and tests
 

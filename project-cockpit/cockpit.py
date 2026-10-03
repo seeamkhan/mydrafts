@@ -21,6 +21,8 @@ Everything else:
     plan new TOPIC | context new TOPIC
     lint FILE                   check a plan or context file has its required sections
     vendor                      copy this kit into the repo (.cockpit/kit/) so it travels
+    publish --pages|--tailscale public build to GitHub Pages (public repos only, privacy
+                                checked) or the full site on your tailnet only
 
 Standard library only (Python 3.9+). If the `markdown` package is installed it
 is used for nicer HTML; otherwise a small built-in renderer takes over.
@@ -39,10 +41,11 @@ import shutil
 import socket
 import subprocess
 import sys
+import tempfile
 import urllib.request
 from pathlib import Path
 
-VERSION = "1.0.0"
+VERSION = "1.1.0"
 KIT_DIR = Path(__file__).resolve().parent
 TEMPLATES = KIT_DIR / "templates"
 
@@ -1083,9 +1086,12 @@ el.style.display=el.getAttribute('data-find').indexOf(q)>=0?'':'none'})}
 
 
 class Site:
-    def __init__(self, repo: Repo, out: Path, probe_now: bool = False):
+    def __init__(self, repo: Repo, out: Path, probe_now: bool = False, public: bool = False):
         self.repo = repo
         self.out = out
+        # public=True is the GitHub Pages build: no logs, and no host, code path,
+        # off switch or probe detail (those name machines, ports and paths).
+        self.public = public
         self.docs = load_docs(repo)
         self.by_rel = {d.rel: d for d in self.docs}
         self.board = board_load(repo)
@@ -1094,6 +1100,10 @@ class Site:
             self.probes = probe_all(repo)
         else:
             self.probes = read_json(repo.dir / "state" / "probes.json", {"components": {}})
+        if public:
+            self.probes = {"at": self.probes.get("at", "never"),
+                           "components": {k: {"state": v.get("state", "unknown"), "detail": ""}
+                                          for k, v in self.probes.get("components", {}).items()}}
         self.title = repo.config["project"]
 
     # -- helpers
@@ -1307,7 +1317,9 @@ class Site:
                 what = e(c.get("what", ""))
                 cls = "draft" if c["id"] in drafts else ""
                 extra = []
-                if c.get("host"):
+                if self.public:
+                    pass
+                elif c.get("host"):
                     extra.append(f"<b>Runs on:</b> {e(c['host'])}")
                 if c.get("code"):
                     extra.append(f"<b>Code:</b> <code>{e(c['code'])}</code>")
@@ -1330,7 +1342,9 @@ class Site:
     def logs_page(self) -> None:
         e = html.escape
         body = ["<h1>Logs</h1>"]
-        if not self.repo.config.get("logs_in_site", True):
+        if self.public:
+            body.append("<p>Logs are never part of a public site. Use <code>cockpit logs</code> in a terminal.</p>")
+        elif not self.repo.config.get("logs_in_site", True):
             body.append("<p>Logs are switched off for the site (<code>logs_in_site</code> in .cockpit/config.json). "
                         "Use <code>cockpit logs</code> in a terminal.</p>")
         else:
@@ -1468,6 +1482,181 @@ def check(repo: Repo, strict: bool = False) -> tuple[list[str], list[str]]:
     return errors, warnings
 
 
+
+# --------------------------------------------------------------------------
+# publish: GitHub Pages (public repos only) or Tailscale (private)
+# --------------------------------------------------------------------------
+
+# What must never reach a public page. Each hit blocks a Pages publish.
+PRIVACY_RX = {
+    "email": re.compile(r"\b[\w.+-]+@[\w-]+\.[\w.-]+\b"),
+    "ip address": re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}\b"),
+    "phone number": re.compile(r"(?<![\w.-])\(?\d{3}\)?[ .-]\d{3}[ .-]\d{4}\b"),
+    "home folder": re.compile(r"(?:/Users/|/home/|C:\\Users\\)[A-Za-z0-9._-]+"),
+    "redacted secret": re.compile(r"\[redacted\]"),
+    "private host": re.compile(r"\b[\w-]+\.(?:local|lan|internal|ts\.net)\b"),
+}
+PRIVACY_OK = re.compile(r"(?:noreply|no-reply|example\.(?:com|org)|users\.noreply\.github\.com)", re.I)
+
+
+def github_slug(url: str) -> str | None:
+    """owner/repo from a GitHub remote url, or None."""
+    m = re.match(r"^(?:https?://(?:[^@/]+@)?github\.com/|git@github\.com:|ssh://git@github\.com/)"
+                 r"([\w.-]+)/([\w.-]+?)(?:\.git)?/?$", url.strip())
+    return f"{m.group(1)}/{m.group(2)}" if m else None
+
+
+def github_visibility(slug: str) -> str:
+    """'public', 'private' or 'unknown'. Unknown is treated as private."""
+    if shutil.which("gh"):
+        try:
+            r = subprocess.run(["gh", "api", f"repos/{slug}", "--jq", ".private"],
+                               capture_output=True, text=True, timeout=20)
+            if r.returncode == 0 and r.stdout.strip() in ("true", "false"):
+                return "private" if r.stdout.strip() == "true" else "public"
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+    try:  # without a login, a private repo answers 404
+        with urllib.request.urlopen(f"https://api.github.com/repos/{slug}", timeout=10) as resp:
+            return "private" if json.load(resp).get("private") else "public"
+    except Exception:  # noqa: BLE001
+        return "unknown"
+
+
+def privacy_scan(site: Path) -> list[str]:
+    """Every line of the built site that looks private. Empty list = clean."""
+    hits = []
+    for f in sorted(site.rglob("*")):
+        if not f.is_file() or f.suffix not in (".html", ".json", ".txt"):
+            continue
+        text = f.read_text(encoding="utf-8", errors="replace")
+        text = re.sub(r"<(script|style)\b.*?</\1>", "", text, flags=re.S)
+        for kind, rx in PRIVACY_RX.items():
+            for m in rx.finditer(text):
+                if PRIVACY_OK.search(m.group(0)):
+                    continue
+                if kind == "ip address" and m.group(0).startswith(("0.", "1.0", "2.0")):
+                    continue  # version numbers like 1.0.0.1
+                hits.append(f"{f.relative_to(site)}: {kind}: {m.group(0)}")
+    return hits
+
+
+def publish_pages(repo: Repo, *, branch: str = "gh-pages", remote: str = "origin",
+                  dry_run: bool = False, allow: bool = False, visibility=github_visibility) -> tuple[int, list[str]]:
+    """Build the public site and push it to the gh-pages branch. Refuses a private repo."""
+    out = []
+    url = repo.git("remote", "get-url", remote).strip()
+    slug = github_slug(url) if url else None
+    if not slug:
+        return 1, [f"no GitHub remote called '{remote}' (got '{url or 'none'}'); Pages needs one"]
+    vis = visibility(slug)
+    if vis != "public":
+        return 1, [f"{slug} is {vis}. A GitHub Pages site is public on the internet even when the repo "
+                   "is private, so cockpit refuses. Use `publish --tailscale` for a private link."]
+    site = repo.state_dir / "pages-site"
+    n = Site(repo, site, public=True).build()
+    (site / ".nojekyll").write_text("", encoding="utf-8")
+    out.append(f"built the public site ({n} docs, no logs, no hosts) in {site}")
+    hits = privacy_scan(site)
+    if hits and not allow:
+        return 1, out + [f"privacy check found {len(hits)} thing(s); nothing was pushed:"] + \
+            [f"  {h}" for h in hits[:40]] + \
+            ["fix the docs (or exclude them in .cockpit/config.json docs_exclude) and run again; "
+             "--allow-findings pushes anyway after you have read every line"]
+    if dry_run:
+        return 0, out + ["privacy check clean" if not hits else f"{len(hits)} finding(s) allowed",
+                         f"dry run: would push to {remote}/{branch} of {slug}"]
+    work = Path(tempfile.mkdtemp(prefix="cockpit-pages.")) / "pages"
+
+    def git(*args, cwd=repo.root):
+        r = subprocess.run(["git", *args], cwd=cwd, capture_output=True, text=True, timeout=120)
+        if r.returncode:
+            raise RuntimeError(f"git {' '.join(args)}: {(r.stderr or r.stdout).strip()}")
+        return r.stdout
+
+    try:
+        has_remote = bool(repo.git("ls-remote", "--heads", remote, branch).strip())
+        if has_remote:
+            git("fetch", "-q", remote, f"{branch}:refs/remotes/{remote}/{branch}")
+            git("worktree", "add", "-q", "--detach", str(work), f"{remote}/{branch}")
+            git("checkout", "-q", "-B", branch, cwd=work)
+        else:
+            git("worktree", "add", "-q", "--detach", str(work))
+            git("checkout", "-q", "--orphan", branch, cwd=work)
+        for item in work.iterdir():
+            if item.name != ".git":
+                shutil.rmtree(item) if item.is_dir() else item.unlink()
+        shutil.copytree(site, work, dirs_exist_ok=True)
+        git("add", "-A", cwd=work)
+        if not git("status", "--porcelain", cwd=work).strip():
+            out.append("no change since the last publish")
+        else:
+            git("-c", "user.name=project-cockpit", "-c", "user.email=cockpit@users.noreply.github.com",
+                "commit", "-qm", f"cockpit: publish {today()}", cwd=work)
+            git("push", "-q", remote, f"HEAD:refs/heads/{branch}", cwd=work)
+            out.append(f"pushed to {remote}/{branch}")
+    except RuntimeError as exc:
+        return 1, out + [str(exc)]
+    finally:
+        repo.git("worktree", "remove", "--force", str(work))
+        shutil.rmtree(work.parent, ignore_errors=True)
+    owner, name = slug.split("/")
+    out += [f"site: https://{owner}.github.io/{name}/  (public: anyone with the link can read it)",
+            "first time only, turn Pages on:",
+            f'  gh api -X POST repos/{slug}/pages -f "source[branch]={branch}" -f "source[path]=/"']
+    return 0, out
+
+
+def publish_tailscale(repo: Repo, *, path: str = "", port: int = 0, dry_run: bool = False,
+                      off: bool = False, probe_now: bool = False) -> tuple[int, list[str]]:
+    """Serve the full site on your tailnet only (tailscale serve, never funnel).
+
+    Without --port, tailscale serves the site folder directly. The macOS Tailscale
+    app cannot (sandbox), so there you keep `cockpit serve --port N` running and
+    pass --port N: tailscale then proxies the path to it."""
+    path = path or f"/cockpit/{slug(repo.config['project'])}"
+    if not path.startswith("/") or path == "/":
+        return 1, ["--path must start with / and must not be / itself (that is usually taken)"]
+    if off:
+        cmd = ["tailscale", "serve", "--bg", "--set-path", path, "off"]
+        out = []
+    else:
+        site = repo.root / repo.config["site_out"]
+        n = Site(repo, site, probe_now=probe_now).build()
+        out = [f"built {n} docs + dashboard into {site}"]
+        target = f"http://127.0.0.1:{port}" if port else str(site)
+        cmd = ["tailscale", "serve", "--bg", "--set-path", path, target]
+        if port and not dry_run:
+            try:
+                socket.create_connection(("127.0.0.1", port), timeout=2).close()
+            except OSError:
+                return 1, out + [f"nothing answers on port {port}. Start it first and keep it running:",
+                                 f"  cockpit.py serve --root {repo.root} --port {port} --rebuild-every 300"]
+    if dry_run:
+        return 0, out + ["dry run: would run " + " ".join(cmd)]
+    if not shutil.which("tailscale"):
+        return 1, out + ["tailscale is not installed; open the site from the folder instead"]
+    r = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+    if r.returncode:
+        err = (r.stderr or r.stdout).strip()
+        if "not supported" in err and not port:
+            return 1, out + ["this Tailscale app cannot serve a folder (the macOS app is sandboxed). Do this instead:",
+                             f"  1. keep it running: cockpit.py serve --root {repo.root} --port 8765 --rebuild-every 300",
+                             f"  2. cockpit.py publish --root {repo.root} --tailscale --port 8765"]
+        return 1, out + [f"tailscale serve failed: {err}"]
+    if off:
+        return 0, [f"stopped serving {path}"]
+    host = ""
+    try:
+        st = json.loads(subprocess.run(["tailscale", "status", "--json"], capture_output=True,
+                                       text=True, timeout=20).stdout)
+        host = st.get("Self", {}).get("DNSName", "").rstrip(".")
+    except Exception:  # noqa: BLE001
+        pass
+    return 0, out + [f"private link (your tailnet only): https://{host or '<this-machine>'}{path}/",
+                     ("it works while `cockpit serve` runs on that port" if port else
+                      "it stays live; run `cockpit build` to refresh it") + "; `publish --tailscale --off` stops it"]
+
 # --------------------------------------------------------------------------
 # CLI
 # --------------------------------------------------------------------------
@@ -1521,6 +1710,19 @@ def main(argv: list[str] | None = None) -> int:
     s = sub.add_parser("check", help="all validators; exit 1 on errors")
     s.add_argument("--strict", action="store_true", help="warnings count as errors")
     sub.add_parser("vendor", help="copy this kit into the repo")
+    pb = sub.add_parser("publish", help="put the dashboard on GitHub Pages (public repos only) or your tailnet")
+    where = pb.add_mutually_exclusive_group(required=True)
+    where.add_argument("--pages", action="store_true", help="push a public build to the gh-pages branch")
+    where.add_argument("--tailscale", action="store_true", help="serve the full site on your tailnet only")
+    pb.add_argument("--dry-run", action="store_true", help="build and check, change nothing")
+    pb.add_argument("--allow-findings", action="store_true", help="Pages: push even if the privacy check found things")
+    pb.add_argument("--branch", default="gh-pages")
+    pb.add_argument("--remote", default="origin")
+    pb.add_argument("--path", default="", help="Tailscale: url path (default /cockpit/<project>)")
+    pb.add_argument("--port", type=int, default=0,
+                    help="Tailscale: proxy to a running `cockpit serve` on this port (needed on the macOS app)")
+    pb.add_argument("--off", action="store_true", help="Tailscale: stop serving the path")
+    pb.add_argument("--probe", action="store_true")
 
     b = sub.add_parser("board", help="the action board")
     bs = b.add_subparsers(dest="bcmd", required=True)
@@ -1560,6 +1762,15 @@ def main(argv: list[str] | None = None) -> int:
     li = sub.add_parser("lint", help="check a plan or context file")
     li.add_argument("files", nargs="+")
 
+    # --root works anywhere on the line (`init --root X` as well as `--root X init`).
+    argv = list(sys.argv[1:] if argv is None else argv)
+    for i, a in enumerate(argv):
+        if a == "--root" and i + 1 < len(argv):
+            argv = ["--root", argv[i + 1]] + argv[:i] + argv[i + 2:]
+            break
+        if a.startswith("--root="):
+            argv = [a] + argv[:i] + argv[i + 1:]
+            break
     args = p.parse_args(argv)
     repo = Repo(args.root)
 
@@ -1617,6 +1828,15 @@ def main(argv: list[str] | None = None) -> int:
     if args.cmd == "vendor":
         print(vendor(repo))
         return 0
+    if args.cmd == "publish":
+        if args.pages:
+            code, lines = publish_pages(repo, branch=args.branch, remote=args.remote,
+                                        dry_run=args.dry_run, allow=args.allow_findings)
+        else:
+            code, lines = publish_tailscale(repo, path=args.path, port=args.port, dry_run=args.dry_run,
+                                            off=args.off, probe_now=args.probe)
+        print("\n".join(lines))
+        return code
     if args.cmd == "board":
         if args.bcmd == "list":
             items = board_load(repo)["items"]

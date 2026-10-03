@@ -225,5 +225,86 @@ class Lint(unittest.TestCase):
             shutil.rmtree(root, ignore_errors=True)
 
 
+class Publish(unittest.TestCase):
+    def setUp(self):
+        self.root = make_repo()
+        c.init(c.Repo(self.root))
+        self.bare = Path(tempfile.mkdtemp(prefix="cockpit-remote.")) / "r.git"
+        subprocess.run(["git", "init", "-q", "--bare", str(self.bare)], check=True)
+        subprocess.run(["git", "remote", "add", "origin", str(self.bare)], cwd=self.root, check=True)
+
+    def tearDown(self):
+        shutil.rmtree(self.root, ignore_errors=True)
+        shutil.rmtree(self.bare.parent, ignore_errors=True)
+
+    def test_root_after_the_command(self):
+        self.assertEqual(c.main(["status", "--root", str(self.root)]), 0)
+        self.assertEqual(c.main(["board", "list", f"--root={self.root}"]), 0)
+
+    def test_github_slug(self):
+        self.assertEqual(c.github_slug("git@github.com:me/proj.git"), "me/proj")
+        self.assertEqual(c.github_slug("https://github.com/me/proj"), "me/proj")
+        self.assertEqual(c.github_slug("https://tok@github.com/me/my.proj.git"), "me/my.proj")
+        self.assertIsNone(c.github_slug("https://gitlab.com/me/proj.git"))
+
+    def test_public_site_has_no_logs_or_hosts(self):
+        repo = c.Repo(self.root)
+        data = c.system_load(repo)
+        data["components"][0]["host"] = "box.internal"
+        data["components"][0]["logs"] = ["logs/app.log"]
+        c.write_json(repo.system_file, data)
+        out = self.root / "pub"
+        c.Site(repo, out, public=True).build()
+        site = "".join(f.read_text() for f in out.rglob("*.html"))
+        self.assertNotIn("box.internal", site)
+        self.assertNotIn("login failed", site)
+        self.assertIn("never part of a public site", (out / "logs.html").read_text())
+
+    def test_privacy_scan(self):
+        d = self.root / "scan"
+        d.mkdir()
+        (d / "a.html").write_text("mail bob@corp.com from 10.0.0.5 at /Users/bob/x, call 416-555-1234 "
+                                  "noreply@example.com <script>var x='a@b.co'</script>")
+        kinds = {h.split(": ")[1] for h in c.privacy_scan(d)}
+        self.assertEqual(kinds, {"email", "ip address", "home folder", "phone number"})
+
+    def test_pages_refuses_private_repo(self):
+        repo = c.Repo(self.root)
+        subprocess.run(["git", "remote", "set-url", "origin", "git@github.com:me/proj.git"], cwd=self.root, check=True)
+        code, lines = c.publish_pages(repo, visibility=lambda s: "private")
+        self.assertEqual(code, 1)
+        self.assertIn("refuses", lines[0])
+        code, _ = c.publish_pages(repo, visibility=lambda s: "unknown")
+        self.assertEqual(code, 1)
+
+    def test_pages_pushes_branch(self):
+        repo = c.Repo(self.root)
+        orig = c.github_slug
+        c.github_slug = lambda url: "me/proj"
+        try:
+            code, lines = c.publish_pages(repo, visibility=lambda s: "public", allow=True)
+            self.assertEqual(code, 0, lines)
+            files = subprocess.run(["git", "ls-tree", "-r", "--name-only", "gh-pages"], cwd=self.bare,
+                                   capture_output=True, text=True).stdout.split()
+            self.assertIn("index.html", files)
+            self.assertIn(".nojekyll", files)
+            self.assertNotIn("README.md", files)
+            code, lines = c.publish_pages(repo, visibility=lambda s: "public", allow=True)
+            self.assertEqual(code, 0, lines)
+            self.assertNotIn("pages", subprocess.run(["git", "worktree", "list"], cwd=self.root,
+                                                     capture_output=True, text=True).stdout.split("\n", 1)[-1])
+        finally:
+            c.github_slug = orig
+
+    def test_tailscale_dry_run(self):
+        code, lines = c.publish_tailscale(c.Repo(self.root), dry_run=True)
+        self.assertEqual(code, 0)
+        self.assertIn("--set-path /cockpit/", lines[-1])
+        self.assertNotIn("funnel", lines[-1])
+        self.assertEqual(c.publish_tailscale(c.Repo(self.root), path="/", dry_run=True)[0], 1)
+        code, lines = c.publish_tailscale(c.Repo(self.root), port=8765, dry_run=True)
+        self.assertTrue(lines[-1].endswith("http://127.0.0.1:8765"))
+
+
 if __name__ == "__main__":
     unittest.main()
